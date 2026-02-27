@@ -7,7 +7,12 @@ NanoGPT Slowrun is a new benchmark for language modeling algorithms in the infin
 
 When speed is not the binding constraint, the space of promising algorithms changes dramatically--for example, large models trained with heavy regularization, expensive optimizers, and evolutionary search are all fair game. We want leaps like GPT-3, where previously unimaginable compute led to better generalization. That doesn't happen if wall-clock time is your constraint.
 
-The baseline trains in \~47 minutes on 8xH100 (\~$12) and achieves 3.402 val loss. There are two tracks: an unlimited compute track with minimal restrictions on hardware or time, and a limited compute track capped at a single 8xH100 node for 1 hour, to minimize the barrier to entry. For now the unlimited track lives in the root directory, and the limited track lives at [limited/](limited/). Submit an entry by opening a PR.
+The baseline trains in \~47 minutes on 8xH100 (\~$12) and achieves 3.402 val loss. There are three tracks: 
+1. an unlimited compute track with minimal restrictions on hardware or time, 
+2. an unlimited compute track which allows us to aggregate ensembles of different models (since ensembling gives such a massive advantage, it is useful to measure separately),
+3. and a limited compute track capped at a single 8xH100 node for 1 hour, to minimize the barrier to entry. 
+
+For now the unlimited track lives in the root directory, the ensemble track lives in [ensemble/](ensemble/), and the limited track lives at [limited/](limited/). Submit an entry by opening a PR.
 
 ## Unlimited Compute Leaderboard 
 
