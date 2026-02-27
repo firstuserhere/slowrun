@@ -1,13 +1,19 @@
 # NanoGPT Slowrun
 ![Experiments](val_loss_animation.gif)
 
-NanoGPT Slowrun is a new benchmark for language modeling algorithms in the infinite compute, fixed data regime: 100M tokens from FineWeb, no compute/time limit, lowest validation loss wins.[^1] We call it a Slowrun since the goal is to spend as much time with the data as we need to maximize learning on it. We deliberately choose this setting in contrast to speedruns like modded-nanogpt, which assume infinite data and optimize for wall-clock time on fixed hardware. We're proud to have the support of @karpathy himself! 
+NanoGPT Slowrun is a new benchmark for language modeling algorithms in the infinite compute, fixed data regime: 100M tokens from FineWeb, no compute/time limit, lowest validation loss wins.[^1] We call it a Slowrun since the goal is to spend as much time with the data as we need to maximize learning on it. We deliberately choose this setting in contrast to speedruns like modded-nanogpt, which assume infinite data and optimize for wall-clock time on fixed hardware. We're proud to have the support of [@karpathy](https://x.com/karpathy/status/2027099040073286087) himself! 
 
 <img src="karpathy.png" alt="karpathy" width="600">
 
 When speed is not the binding constraint, the space of promising algorithms changes dramatically--for example, large models trained with heavy regularization, expensive optimizers, and evolutionary search are all fair game. We want leaps like GPT-3, where previously unimaginable compute led to better generalization. That doesn't happen if wall-clock time is your constraint.
 
 The baseline trains in \~47 minutes on 8xH100 (\~$12) and achieves 3.402 val loss. There are two tracks: an unlimited compute track with minimal restrictions on hardware or time, and a limited compute track capped at a single 8xH100 node for 1 hour, to minimize the barrier to entry. For now the unlimited track lives in the root directory, and the limited track lives at [limited/](limited/). Submit an entry by opening a PR.
+
+## Unlimited Compute Leaderboard 
+
+| # | Val Loss | Description | Date | Log | Contributors |
+| - | - | - | - | - | - |
+1 | 3.402 | Baseline: 2.7B transformer, Muon, dropout 0.1, weight decay 1.6 | 02/26/26 | - | [@akshayvegesna](https://x.com/akshayvegesna)
 
 ## Why limited data, unlimited compute? 
 
