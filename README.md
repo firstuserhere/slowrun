@@ -1,11 +1,13 @@
 # NanoGPT Slowrun
 ![Experiments](val_loss_animation.gif)
 
-NanoGPT Slowrun is a new benchmark for language modeling algorithms in the infinite compute, fixed data regime: 100M tokens from FineWeb, no compute/time limit, lowest validation loss wins.[^1] We call it a Slowrun since the goal is to spend as much time with the data as we need to maximize learning on it. We deliberately choose this setting in contrast to speedruns like modded-nanogpt, which assume infinite data and optimize for wall-clock time on fixed hardware. 
+NanoGPT Slowrun is a new benchmark for language modeling algorithms in the infinite compute, fixed data regime: 100M tokens from FineWeb, no compute/time limit, lowest validation loss wins.[^1] We call it a Slowrun since the goal is to spend as much time with the data as we need to maximize learning on it. We deliberately choose this setting in contrast to speedruns like modded-nanogpt, which assume infinite data and optimize for wall-clock time on fixed hardware. We're proud to have the support of @karpathy himself! 
+
+<img src="karpathy.png" alt="karpathy" width="600">
 
 When speed is not the binding constraint, the space of promising algorithms changes dramatically--for example, large models trained with heavy regularization, expensive optimizers, and evolutionary search are all fair game. We want leaps like GPT-3, where previously unimaginable compute led to better generalization. That doesn't happen if wall-clock time is your constraint.
 
-The baseline trains in \~47 minutes on 8xH100 (\~$12) and achieves 3.402 val loss. For now, there is one track with no compute limit. Submit an entry by opening a PR. We plan to add time-tiered tracks in the near future, including one capped at a single 8xH100 node for at most 2 hours, to lower the barrier to entry.
+The baseline trains in \~47 minutes on 8xH100 (\~$12) and achieves 3.402 val loss. There are two tracks: an unlimited compute track with minimal restrictions on hardware or time, and a limited compute track capped at a single 8xH100 node for 1 hour, to minimize the barrier to entry. For now the unlimited track lives in the root directory, and the limited track lives at [limited/](limited/). Submit an entry by opening a PR.
 
 ## Why limited data, unlimited compute? 
 
@@ -13,7 +15,7 @@ The bitter lesson tells us that we should strongly prefer algorithms that scale 
 
 This repo builds on [Nanochat](https://github.com/karpathy/nanochat), which took many ideas from the modded-nanogpt speedrun contest. To be fair, the speedrun contest did provide real data efficiency gains: using less data is one way to train faster. But because it sets speed as the binding constraint, it filters out an entire class of algorithms that yield learning gains. 
 
-## Baseline Approach
+## Baseline Approach 
 
 Following Kim et al. (2025),[^2] we developed the baseline in three steps:
 
