@@ -13,6 +13,7 @@ import math
 import time
 import json
 import argparse
+import datetime
 from types import SimpleNamespace
 from functools import partial
 from dataclasses import dataclass
@@ -703,7 +704,8 @@ if ddp and torch.cuda.is_available():
     device = torch.device("cuda", ddp_local_rank)
     torch.cuda.set_device(device)
     torch.cuda.manual_seed(42)
-    dist.init_process_group(backend="nccl", device_id=device)
+    dist.init_process_group(backend="nccl", device_id=device,
+                            timeout=datetime.timedelta(minutes=30))
     dist.barrier()
 else:
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
