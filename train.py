@@ -34,7 +34,7 @@ parser = argparse.ArgumentParser(description="Train GPT model")
 parser.add_argument("--device-batch-size", type=int, default=4)
 parser.add_argument("--num-epochs", type=int, default=12)
 parser.add_argument("--patience", type=int, default=-1)
-parser.add_argument("--run", type=str, default=None)
+parser.add_argument("--wandb-run", type=str, default=None)
 parser.add_argument("--scalar-lr", type=float, default=0.5)
 parser.add_argument("--matrix-lr", type=float, default=0.08)
 parser.add_argument("--weight-decay", type=float, default=1.6)
@@ -715,7 +715,7 @@ else:
     raise RuntimeError("Flash Attention 3 is required but not available. A Hopper (sm90) GPU is needed.")
 
 # wandb
-run_name = args.run if args.run else time.strftime("%Y%m%d_%H%M%S")
+run_name = args.wandb_run if args.wandb_run else time.strftime("%Y%m%d_%H%M%S")
 _wandb_kwargs = {"project": "slowrun", "entity": "asic_oocl", "name": run_name}
 if args.wandb_group:
     _wandb_kwargs["group"] = args.wandb_group
