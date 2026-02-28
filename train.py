@@ -759,6 +759,13 @@ while current_epoch <= args.num_epochs:
         (loss / grad_accum_steps).backward()
         x, y, epoch = next(train_loader)
 
+    # Compute gradient norm before optimizer step
+    grad_norm = 0.0
+    for p in model.parameters():
+        if p.grad is not None:
+            grad_norm += p.grad.float().norm().item() ** 2
+    grad_norm = grad_norm ** 0.5
+
     # Update optimizer
     lrm = get_lr_multiplier(step)
     for group in optimizer.param_groups:
@@ -785,7 +792,17 @@ while current_epoch <= args.num_epochs:
     steps_done = step - 10
     eta_str = f" | eta: {(num_iterations - step) * total_training_time / steps_done / 60:.1f}m" if steps_done > 0 else ""
     print0(f"step {step:05d} ({pct:.2f}%) | loss: {debiased:.6f} | dt: {dt*1000:.2f}ms | tok/sec: {tok_per_sec:,} | bf16_mfu: {mfu:.2f}%{eta_str}")
-    wandb_run.log({"step": step, "train/loss": debiased, "train/mfu": mfu})
+    wandb_run.log({
+        "step": step,
+        "train/loss": debiased,
+        "train/raw_loss": train_loss_f,
+        "train/lr": lrm,
+        "train/grad_norm": grad_norm,
+        "train/mfu": mfu,
+        "train/tokens_per_sec": tok_per_sec,
+        "train/epoch": current_epoch,
+        "train/wall_time": total_training_time,
+    })
 
     # Synchronize epoch across ranks (different ranks may exhaust data at different steps)
     if ddp:
