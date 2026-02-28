@@ -49,6 +49,15 @@ parser.add_argument("--input_val_bin", type=str, default=None)
 parser.add_argument("--output_json", type=str, default=None)
 parser.add_argument("--wandb_group", type=str, default=None)
 parser.add_argument("--dropout", type=float, default=0.1)
+# New regularization args
+parser.add_argument("--label-smoothing", type=float, default=0.1)
+parser.add_argument("--ema-decay", type=float, default=0.999, help="EMA decay (0 to disable)")
+parser.add_argument("--grad-clip", type=float, default=1.0, help="Gradient norm clipping (0 to disable)")
+parser.add_argument("--warmup-ratio", type=float, default=0.02)
+parser.add_argument("--dropout-schedule", action="store_true", help="Linearly increase dropout from 0 to --dropout-end")
+parser.add_argument("--dropout-end", type=float, default=0.2, help="Final dropout when using --dropout-schedule")
+parser.add_argument("--swa-start-frac", type=float, default=0.75, help="Fraction of training to start SWA (0 to disable)")
+parser.add_argument("--swa-every", type=int, default=10, help="Collect SWA checkpoint every N steps")
 args = parser.parse_args()
 
 # Resolve output path
@@ -85,7 +94,7 @@ SCALAR_LR = BASE_SCALAR_LR * _lr_mult
 
 WEIGHT_DECAY = args.weight_decay
 ADAM_BETAS = (0.8, 0.95)
-WARMUP_RATIO = 0.0
+WARMUP_RATIO = args.warmup_ratio
 WARMDOWN_RATIO = 0.5
 FINAL_LR_FRAC = 0.0
 
@@ -146,6 +155,7 @@ class GPTConfig:
     n_embd: int = N_EMBD
     window_pattern: str = WINDOW_PATTERN
     dropout: float = 0.0
+    label_smoothing: float = 0.0
 
 def norm(x):
     return F.rms_norm(x, (x.size(-1),))
@@ -333,7 +343,7 @@ class GPT(nn.Module):
         logits = self.lm_head(x)[..., :self.config.vocab_size].float()
         logits = 15 * torch.tanh(logits / 15)  # softcap
         if targets is not None:
-            return F.cross_entropy(logits.view(-1, logits.size(-1)), targets.view(-1), ignore_index=-1, reduction=loss_reduction)
+            return F.cross_entropy(logits.view(-1, logits.size(-1)), targets.view(-1), ignore_index=-1, reduction=loss_reduction, label_smoothing=self.config.label_smoothing)
         return logits
 
 # =============================================================================
@@ -571,6 +581,70 @@ class DataLoader:
         return batch[:, :-1].contiguous(), batch[:, 1:].contiguous(), self.epoch
         
 # =============================================================================
+# EMA, SWA, and dropout scheduling helpers
+# =============================================================================
+
+class EMA:
+    """Exponential Moving Average of model parameters."""
+    def __init__(self, model, decay=0.999):
+        self.decay = decay
+        self.shadow = {name: p.data.clone() for name, p in model.named_parameters() if p.requires_grad}
+
+    def update(self, model):
+        for name, p in model.named_parameters():
+            if p.requires_grad and name in self.shadow:
+                self.shadow[name].lerp_(p.data, 1 - self.decay)
+
+    def apply(self, model):
+        """Swap model params with EMA params. Call restore() to undo."""
+        self.backup = {}
+        for name, p in model.named_parameters():
+            if p.requires_grad and name in self.shadow:
+                self.backup[name] = p.data.clone()
+                p.data.copy_(self.shadow[name])
+
+    def restore(self, model):
+        """Restore original params after apply()."""
+        for name, p in model.named_parameters():
+            if p.requires_grad and name in self.backup:
+                p.data.copy_(self.backup[name])
+        self.backup = {}
+
+
+class SWA:
+    """Stochastic Weight Averaging via running mean of checkpoints."""
+    def __init__(self):
+        self.avg_state = None
+        self.count = 0
+
+    def update(self, model):
+        self.count += 1
+        state = model.state_dict()
+        if self.avg_state is None:
+            self.avg_state = {k: v.clone().float() for k, v in state.items()}
+        else:
+            for k in self.avg_state:
+                self.avg_state[k] += (state[k].float() - self.avg_state[k]) / self.count
+
+    def apply(self, model):
+        """Swap model params with SWA-averaged params. Call restore() to undo."""
+        self.backup = {k: v.clone() for k, v in model.state_dict().items()}
+        avg = {k: v.to(self.backup[k].dtype) for k, v in self.avg_state.items()}
+        model.load_state_dict(avg)
+
+    def restore(self, model):
+        model.load_state_dict(self.backup)
+        self.backup = {}
+
+
+def set_dropout(model, p):
+    """Set dropout probability on all Dropout modules."""
+    for module in model.modules():
+        if isinstance(module, nn.Dropout):
+            module.p = p
+
+
+# =============================================================================
 # Loss evaluation
 # =============================================================================
 
@@ -658,7 +732,9 @@ print0(f"  matrix_lr={MATRIX_LR}, scalar_lr={SCALAR_LR}, embedding_lr={EMBEDDING
 print0(f"  weight_decay={WEIGHT_DECAY}, adam_betas={ADAM_BETAS}")
 print0(f"  warmup_ratio={WARMUP_RATIO}, warmdown_ratio={WARMDOWN_RATIO}, final_lr_frac={FINAL_LR_FRAC}")
 print0(f"  num_epochs={args.num_epochs}, patience={args.patience}")
-print0(f"  dropout={args.dropout}")
+print0(f"  dropout={args.dropout}, dropout_schedule={args.dropout_schedule}" + (f" (0→{args.dropout_end})" if args.dropout_schedule else ""))
+print0(f"  label_smoothing={args.label_smoothing}, ema_decay={args.ema_decay}, grad_clip={args.grad_clip}")
+print0(f"  swa_start_frac={args.swa_start_frac}, swa_every={args.swa_every}")
 print0(f"-----------------------")
 
 # Load GPT-2 tokenizer and compute token_bytes for BPB evaluation
@@ -676,7 +752,8 @@ for i in range(vocab_size):
 token_bytes = torch.tensor(token_bytes_list, dtype=torch.int32, device=device)
 
 # Build model
-config = GPTConfig(vocab_size=vocab_size, dropout=args.dropout)
+_init_dropout = 0.0 if args.dropout_schedule else args.dropout
+config = GPTConfig(vocab_size=vocab_size, dropout=_init_dropout, label_smoothing=args.label_smoothing)
 with torch.device("meta"):
     model = GPT(config)
 model.to_empty(device=device)
@@ -697,6 +774,12 @@ model = torch.compile(model, dynamic=False)
 
 # Optimizer
 optimizer = model.setup_optimizer()
+
+# EMA
+ema = EMA(orig_model, decay=args.ema_decay) if args.ema_decay > 0 else None
+
+# SWA
+swa = SWA() if args.swa_start_frac > 0 else None
 
 # Dataloaders
 _train_path = args.input_bin if args.input_bin else os.path.join(DATA_DIR, "fineweb_train.pt")
@@ -759,12 +842,8 @@ while current_epoch <= args.num_epochs:
         (loss / grad_accum_steps).backward()
         x, y, epoch = next(train_loader)
 
-    # Compute gradient norm before optimizer step
-    grad_norm = 0.0
-    for p in model.parameters():
-        if p.grad is not None:
-            grad_norm += p.grad.float().norm().item() ** 2
-    grad_norm = grad_norm ** 0.5
+    # Compute gradient norm and optionally clip
+    grad_norm = torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=args.grad_clip if args.grad_clip > 0 else float('inf')).item()
 
     # Update optimizer
     lrm = get_lr_multiplier(step)
@@ -774,6 +853,21 @@ while current_epoch <= args.num_epochs:
             group["momentum"] = get_muon_momentum(step)
     optimizer.step()
     model.zero_grad(set_to_none=True)
+
+    # EMA update
+    if ema is not None:
+        ema.update(orig_model)
+
+    # Dropout scheduling
+    if args.dropout_schedule:
+        progress = min(step / num_iterations, 1.0)
+        set_dropout(orig_model, progress * args.dropout_end)
+
+    # SWA collection
+    if swa is not None and step >= int(args.swa_start_frac * num_iterations) and step % args.swa_every == 0:
+        swa.update(orig_model)
+        if swa.count == 1:
+            print0(f"SWA: started collecting (step {step})")
     train_loss_f = train_loss.item()
     synchronize()
     dt = time.time() - t0
@@ -802,6 +896,7 @@ while current_epoch <= args.num_epochs:
         "train/tokens_per_sec": tok_per_sec,
         "train/epoch": current_epoch,
         "train/wall_time": total_training_time,
+        "train/dropout": list(m.p for m in orig_model.modules() if isinstance(m, nn.Dropout))[0] if args.dropout_schedule else args.dropout,
     })
 
     # Synchronize epoch across ranks (different ranks may exhaust data at different steps)
@@ -817,11 +912,27 @@ while current_epoch <= args.num_epochs:
         with autocast_ctx:
             val_bpb, val_loss = evaluate_bpb(model, val_loader, eval_steps, token_bytes)
         print0(f"Step {step:05d} | Epoch {current_epoch} | Val BPB: {val_bpb:.6f} | Val Loss: {val_loss:.6f}")
-        wandb_run.log({"step": step, "epoch": current_epoch, "val/bpb": val_bpb, "val/loss": val_loss})
-        # Early stopping
-        if val_bpb < min_val_bpb:
-            min_val_bpb = val_bpb
-            min_val_loss = val_loss
+        log_dict = {"step": step, "epoch": current_epoch, "val/bpb": val_bpb, "val/loss": val_loss}
+
+        # EMA evaluation
+        if ema is not None:
+            ema.apply(orig_model)
+            val_loader_ema = build_val_loader()
+            with autocast_ctx:
+                ema_bpb, ema_loss = evaluate_bpb(model, val_loader_ema, eval_steps, token_bytes)
+            ema.restore(orig_model)
+            print0(f"Step {step:05d} | Epoch {current_epoch} | EMA Val BPB: {ema_bpb:.6f} | EMA Val Loss: {ema_loss:.6f}")
+            log_dict["val/ema_bpb"] = ema_bpb
+            log_dict["val/ema_loss"] = ema_loss
+
+        wandb_run.log(log_dict)
+
+        # Early stopping (use EMA loss if available, otherwise regular)
+        check_bpb = ema_bpb if ema is not None else val_bpb
+        check_loss = ema_loss if ema is not None else val_loss
+        if check_bpb < min_val_bpb:
+            min_val_bpb = check_bpb
+            min_val_loss = check_loss
             epochs_without_improvement = 0
         else:
             epochs_without_improvement += 1
@@ -838,6 +949,22 @@ while current_epoch <= args.num_epochs:
     # GC management
     if step == 1:
         gc.collect(); gc.freeze(); gc.disable()
+
+# SWA final evaluation
+if swa is not None and swa.count > 0:
+    print0(f"SWA: collected {swa.count} checkpoints, evaluating averaged model...")
+    model.eval()
+    swa.apply(orig_model)
+    val_loader_swa = build_val_loader()
+    with autocast_ctx:
+        swa_bpb, swa_loss = evaluate_bpb(model, val_loader_swa, eval_steps, token_bytes)
+    swa.restore(orig_model)
+    print0(f"SWA Val BPB: {swa_bpb:.6f} | SWA Val Loss: {swa_loss:.6f}")
+    wandb_run.log({"step": step, "val/swa_bpb": swa_bpb, "val/swa_loss": swa_loss})
+    if swa_bpb < min_val_bpb:
+        min_val_bpb = swa_bpb
+        min_val_loss = swa_loss
+        print0("SWA improved over best EMA/regular val loss!")
 
 # Summary
 print0(f"Peak memory: {get_max_memory() / 1024 / 1024:.2f} MiB")
