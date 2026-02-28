@@ -117,27 +117,40 @@ class DummyWandb:
     def finish(self): pass
 
 # =============================================================================
-# Flash Attention (FA3 on Hopper)
+# Flash Attention (FA3 preferred, FA2 fallback)
 # =============================================================================
 
-def _load_fa3():
+_fa_backend = None  # "fa3" or "fa2"
+
+def _load_flash_attn():
+    global _fa_backend
     if not torch.cuda.is_available():
         return None
+    major, _ = torch.cuda.get_device_capability()
+    # Try FA3 first (Hopper only)
+    if major == 9:
+        try:
+            os.environ["HF_HUB_DISABLE_PROGRESS_BARS"] = "1"
+            from kernels import get_kernel
+            mod = get_kernel('varunneal/flash-attention-3').flash_attn_interface
+            _fa_backend = "fa3"
+            return mod
+        except Exception:
+            pass
+    # Fallback to FA2 (pip install flash-attn)
     try:
-        major, _ = torch.cuda.get_device_capability()
-        if major != 9:
-            return None
-        os.environ["HF_HUB_DISABLE_PROGRESS_BARS"] = "1"
-        from kernels import get_kernel
-        return get_kernel('varunneal/flash-attention-3').flash_attn_interface
-    except Exception:
-        return None
+        import flash_attn as _fa2_pkg
+        _fa_backend = "fa2"
+        return _fa2_pkg
+    except ImportError:
+        pass
+    return None
 
-_fa3 = _load_fa3()
+_fa_mod = _load_flash_attn()
 
 def flash_attn_func(q, k, v, causal=False, window_size=(-1, -1)):
-    """Flash Attention for training (FA3 only). q,k,v: (B, T, H, D)."""
-    return _fa3.flash_attn_func(q, k, v, causal=causal, window_size=window_size)
+    """Flash Attention for training. q,k,v: (B, T, H, D)."""
+    return _fa_mod.flash_attn_func(q, k, v, causal=causal, window_size=window_size)
 
 flash_attn = SimpleNamespace(flash_attn_func=flash_attn_func)
 
@@ -708,11 +721,13 @@ if device_type == "cuda":
     elif "a100" in gpu_name: gpu_peak_flops = 312e12
     elif "4090" in gpu_name: gpu_peak_flops = 165.2e12
 
-# FA3 status
-if _fa3 is not None:
+# Flash Attention status
+if _fa_backend == "fa3":
     print0("Using Flash Attention 3 (Hopper GPU detected)")
+elif _fa_backend == "fa2":
+    print0("Using Flash Attention 2 (FA3 unavailable, falling back to flash-attn)")
 else:
-    raise RuntimeError("Flash Attention 3 is required but not available. A Hopper (sm90) GPU is needed.")
+    raise RuntimeError("Flash Attention is required but not available. Install flash-attn or use a Hopper GPU with compatible kernels package.")
 
 # wandb
 run_name = args.wandb_run if args.wandb_run else time.strftime("%Y%m%d_%H%M%S")
