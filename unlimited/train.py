@@ -6,7 +6,7 @@ After each model is trained, computes ensemble val loss by averaging logits acro
 all models trained so far.
 
 Usage:
-    torchrun --standalone --nproc_per_node=8 ensemble/train.py
+    torchrun --standalone --nproc_per_node=8 unlimited/train.py
 """
 
 import os

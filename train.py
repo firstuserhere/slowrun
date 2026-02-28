@@ -394,9 +394,6 @@ def muon_step_fused(stacked_grads, stacked_params, momentum_buffer, second_momen
     mask = (g * stacked_params) >= 0
     stacked_params.sub_(lr * g + lr * wd * stacked_params * mask)
 
-
-
-
 class DistMuonAdamW(torch.optim.Optimizer):
     """Distributed MuonAdamW with ZeRO-2 style sharding."""
     def __init__(self, param_groups):
@@ -555,7 +552,7 @@ class DataLoader:
 
     def __iter__(self):
         return self
-    
+
     def _shuffle(self):
         """Shuffle batch order for the new epoch, consistent across ranks."""
         g = torch.Generator()

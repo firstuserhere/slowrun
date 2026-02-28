@@ -7,20 +7,29 @@ NanoGPT Slowrun is a new benchmark for language modeling algorithms in the infin
 
 When speed is not the binding constraint, the space of promising algorithms changes dramatically--for example, large models trained with heavy regularization, expensive optimizers, and evolutionary search are all fair game. We want leaps like GPT-3, where previously unimaginable compute led to better generalization. That doesn't happen if wall-clock time is your constraint.
 
-The baseline trains in \~47 minutes on 8xH100 (\~$12) and achieves 3.402 val loss. There are three tracks: 
-1. an unlimited compute track with minimal restrictions on hardware or time, 
-2. an unlimited compute track which allows us to aggregate ensembles of different models (since ensembling gives such a massive advantage, it is useful to measure separately),
-3. and a limited compute track capped at a single 8xH100 node for 1 hour, to minimize the barrier to entry. 
+The baseline trains in \~47 minutes on 8xH100 (\~$12) and achieves 3.402 val loss. There are two tracks: 
+1. a limited compute track capped at a single 8xH100 node for 1 hour (this is 100x the compute used by the Nanochat 1-epoch baseline),
+2. and an unlimited compute track with minimal restrictions on hardware or time. 
 
-For now the unlimited track lives in the root directory, the ensemble track lives in [ensemble/](ensemble/), and the limited track lives at [limited/](limited/). Submit an entry by opening a PR.
+For now the limited track lives in the root directory, and the unlimited track lives at [unlimited/](unlimited/). Submit an entry by opening a PR.
 
-## Unlimited Compute Leaderboard 
+## Leaderboards
+
+### Limited Compute 
+
+The limited-compute track caps runs at a single 8xH100 node for at most 1 hour. 
 
 | # | Val Loss | Description | Date | Time | Contributors |
 | - | - | - | - | - | - |
 1 | 3.402 | Baseline: 2.7B transformer, Muon, dropout 0.1, weight decay 1.6 | 02/26/26 | \~47 mins | [@akshayvegesna](https://x.com/akshayvegesna)
 2 | 3.376 | Add shuffling every epoch | 02/27/26 | \~47 mins | [@kvegesna](https://x.com/karvegas_)
 
+### Unlimited Compute 
+
+| # | Val Loss | Description | Date | Time | Contributors |
+| - | - | - | - | - | - |
+1 | 3.402 | Baseline: 2.7B transformer, Muon, dropout 0.1, weight decay 1.6 | 02/26/26 | \~47 mins | [@akshayvegesna](https://x.com/akshayvegesna)
+2 | 3.264 | Baseline: 8 × 2.7B transformer, Muon, dropout 0.1, weight decay 1.6, logit averaging | 02/27/26 | 6h 44m | [@akshayvegesna](https://x.com/akshayvegesna)
 
 ## Why limited data, unlimited compute? 
 
