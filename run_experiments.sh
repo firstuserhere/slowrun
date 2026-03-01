@@ -75,6 +75,49 @@ ablation() {
 }
 
 # =========================================================================
+# ABLATION PHASE 2: WD extension + training tricks
+# Run after Phase 1 results are in. Tests WD 3.0-5.0 and other Tier 1 ideas.
+# Each still changes ONE thing vs baseline (except combo runs at the end).
+# =========================================================================
+ablation2() {
+    echo "=== ABLATION PHASE 2 (3 epochs each) ==="
+
+    # 1. WD 3.0 (30x standard — the Kim et al. upper range)
+    run_one "abl-wd30-3ep" \
+        --num-epochs=3 --weight-decay=3.0 --label-smoothing=0.0 --ema-decay=0 --grad-clip=0 \
+        --warmup-ratio=0.0 --swa-start-frac=0 --dropout=0.1
+
+    # 2. WD 3.5
+    run_one "abl-wd35-3ep" \
+        --num-epochs=3 --weight-decay=3.5 --label-smoothing=0.0 --ema-decay=0 --grad-clip=0 \
+        --warmup-ratio=0.0 --swa-start-frac=0 --dropout=0.1
+
+    # 3. WD 4.0 (40x standard — past the paper's range)
+    run_one "abl-wd40-3ep" \
+        --num-epochs=3 --weight-decay=4.0 --label-smoothing=0.0 --ema-decay=0 --grad-clip=0 \
+        --warmup-ratio=0.0 --swa-start-frac=0 --dropout=0.1
+
+    # 4. WD 5.0 (50x standard — aggressive)
+    run_one "abl-wd50-3ep" \
+        --num-epochs=3 --weight-decay=5.0 --label-smoothing=0.0 --ema-decay=0 --grad-clip=0 \
+        --warmup-ratio=0.0 --swa-start-frac=0 --dropout=0.1
+
+    # 5. Smaller batch size (262144 instead of 524288 — 2x more gradient steps)
+    run_one "abl-batch262k-3ep" \
+        --num-epochs=3 --total-batch-size=262144 --label-smoothing=0.0 --ema-decay=0 --grad-clip=0 \
+        --warmup-ratio=0.0 --swa-start-frac=0 --dropout=0.1
+
+    # 6. 2% warmup (baseline uses 0%)
+    run_one "abl-warmup002-3ep" \
+        --num-epochs=3 --warmup-ratio=0.02 --label-smoothing=0.0 --ema-decay=0 --grad-clip=0 \
+        --swa-start-frac=0 --dropout=0.1
+
+    echo "=== ABLATION PHASE 2 COMPLETE ==="
+    echo "Compare val loss at epoch 3 on wandb."
+    echo "Next: combine best WD + best dropout + best batch size for submission."
+}
+
+# =========================================================================
 # SUBMIT: Final run on 8xH100 — must finish in <1 hour
 # Update args below based on ablation results
 # =========================================================================
@@ -106,8 +149,9 @@ single() {
 # Main
 # =========================================================================
 case "${1:-ablation}" in
-    ablation) ablation ;;
-    submit)   submit ;;
-    single)   shift; single "$@" ;;
-    *)        echo "Usage: $0 {ablation|submit|single <name> <args...>}" ;;
+    ablation)  ablation ;;
+    ablation2) ablation2 ;;
+    submit)    submit ;;
+    single)    shift; single "$@" ;;
+    *)         echo "Usage: $0 {ablation|ablation2|submit|single <name> <args...>}" ;;
 esac
