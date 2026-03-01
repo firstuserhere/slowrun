@@ -7,8 +7,12 @@
 #   bash run_experiments.sh single <name> <args>  # run a single experiment
 set -e
 
-NGPU=$(nvidia-smi -L | wc -l)
-RUN="torchrun --standalone --nproc_per_node=$NGPU train.py"
+NGPU=$(nvidia-smi -L 2>/dev/null | wc -l)
+if [ "$NGPU" -gt 1 ]; then
+    RUN="torchrun --standalone --nproc_per_node=$NGPU train.py"
+else
+    RUN="python train.py"
+fi
 
 run_one() {
     local name="$1"
@@ -16,6 +20,7 @@ run_one() {
     echo ""
     echo "========================================"
     echo "  Experiment: $name"
+    echo "  GPUs: $NGPU | Runner: $RUN"
     echo "  Args: $@"
     echo "========================================"
     $RUN --wandb-run="$name" "$@"
@@ -24,63 +29,63 @@ run_one() {
 }
 
 # =========================================================================
-# PHASE 1: Quick ablations (3 epochs each, ~12 min on 8xH100)
+# PHASE 1: Quick ablations (1 epoch each, ~10 min on 1xH100)
 # Goal: find which improvements help, which hurt
 # =========================================================================
 phase1() {
-    echo "=== PHASE 1: Quick ablations (3 epochs each) ==="
+    echo "=== PHASE 1: Quick ablations (1 epoch each) ==="
 
     # 1. Original baseline (no improvements)
     run_one "p1-baseline" \
-        --num-epochs=3 --label-smoothing=0.0 --ema-decay=0 --grad-clip=0 \
+        --num-epochs=1 --label-smoothing=0.0 --ema-decay=0 --grad-clip=0 \
         --warmup-ratio=0.0 --swa-start-frac=0 --dropout=0.1
 
     # 2. All improvements ON (the new defaults)
     run_one "p1-all-improvements" \
-        --num-epochs=3
+        --num-epochs=1
 
     # 3. Ablation: no label smoothing
     run_one "p1-no-label-smooth" \
-        --num-epochs=3 --label-smoothing=0.0
+        --num-epochs=1 --label-smoothing=0.0
 
     # 4. Ablation: no EMA
     run_one "p1-no-ema" \
-        --num-epochs=3 --ema-decay=0
+        --num-epochs=1 --ema-decay=0
 
     # 5. Ablation: no grad clipping
     run_one "p1-no-gradclip" \
-        --num-epochs=3 --grad-clip=0
+        --num-epochs=1 --grad-clip=0
 
     # 6. Ablation: no warmup
     run_one "p1-no-warmup" \
-        --num-epochs=3 --warmup-ratio=0.0
+        --num-epochs=1 --warmup-ratio=0.0
 
     # 7. With dropout scheduling (0 -> 0.2)
     run_one "p1-dropout-sched" \
-        --num-epochs=3 --dropout-schedule --dropout-end=0.2
+        --num-epochs=1 --dropout-schedule --dropout-end=0.2
 
     # 8. Label smoothing sweep: 0.05
     run_one "p1-ls-0.05" \
-        --num-epochs=3 --label-smoothing=0.05
+        --num-epochs=1 --label-smoothing=0.05
 
     # 9. Label smoothing sweep: 0.15
     run_one "p1-ls-0.15" \
-        --num-epochs=3 --label-smoothing=0.15
+        --num-epochs=1 --label-smoothing=0.15
 
     echo "=== PHASE 1 COMPLETE ==="
 }
 
 # =========================================================================
-# PHASE 2: Epoch scaling with best config (12, 20, 30, 50 epochs)
+# PHASE 2: Epoch scaling with best config
 # Run after reviewing Phase 1 results
 # =========================================================================
 phase2() {
     echo "=== PHASE 2: Epoch scaling ==="
 
+    run_one "p2-3ep" --num-epochs=3
+    run_one "p2-6ep" --num-epochs=6
     run_one "p2-12ep" --num-epochs=12
     run_one "p2-20ep" --num-epochs=20
-    run_one "p2-30ep" --num-epochs=30
-    run_one "p2-50ep" --num-epochs=50
 
     echo "=== PHASE 2 COMPLETE ==="
 }

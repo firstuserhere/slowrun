@@ -5,7 +5,7 @@ set -e
 echo "=== Setting up slowrun ==="
 
 # Install deps
-pip install -r requirements.txt
+pip install -r requirements.txt 2>&1 | tail -5
 
 # Copy data if not present
 if [ ! -d "fineweb_data" ]; then

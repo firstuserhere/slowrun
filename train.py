@@ -52,7 +52,7 @@ parser.add_argument("--wandb_group", type=str, default=None)
 parser.add_argument("--dropout", type=float, default=0.1)
 # New regularization args
 parser.add_argument("--label-smoothing", type=float, default=0.1)
-parser.add_argument("--ema-decay", type=float, default=0.999, help="EMA decay (0 to disable)")
+parser.add_argument("--ema-decay", type=float, default=0.99, help="EMA decay (0 to disable)")
 parser.add_argument("--grad-clip", type=float, default=1.0, help="Gradient norm clipping (0 to disable)")
 parser.add_argument("--warmup-ratio", type=float, default=0.02)
 parser.add_argument("--dropout-schedule", action="store_true", help="Linearly increase dropout from 0 to --dropout-end")
@@ -664,11 +664,17 @@ def set_dropout(model, p):
 
 @torch.no_grad()
 def evaluate_bpb(model, batches, steps, token_bytes):
-    """Compute bits per byte and mean cross-entropy loss on a set of batches."""
-    total_nats = torch.tensor(0.0, dtype=torch.float32, device=model.get_device())
-    total_bytes = torch.tensor(0, dtype=torch.int64, device=model.get_device())
-    total_loss = torch.tensor(0.0, dtype=torch.float32, device=model.get_device())
-    total_tokens = torch.tensor(0, dtype=torch.int64, device=model.get_device())
+    """Compute bits per byte and mean cross-entropy loss on a set of batches.
+    Always uses raw CE (no label smoothing) so results are comparable across runs."""
+    # Temporarily disable label smoothing for eval
+    orig_model = model._orig_mod if hasattr(model, '_orig_mod') else model
+    saved_ls = orig_model.config.label_smoothing
+    orig_model.config.label_smoothing = 0.0
+
+    total_nats = torch.tensor(0.0, dtype=torch.float32, device=orig_model.get_device())
+    total_bytes = torch.tensor(0, dtype=torch.int64, device=orig_model.get_device())
+    total_loss = torch.tensor(0.0, dtype=torch.float32, device=orig_model.get_device())
+    total_tokens = torch.tensor(0, dtype=torch.int64, device=orig_model.get_device())
     batch_iter = iter(batches)
     for _ in range(steps):
         x, y, _ = next(batch_iter)
@@ -680,6 +686,10 @@ def evaluate_bpb(model, batches, steps, token_bytes):
         num_bytes2d = token_bytes[y]
         total_nats += (loss2d * (num_bytes2d > 0)).sum()
         total_bytes += num_bytes2d.sum()
+
+    # Restore label smoothing
+    orig_model.config.label_smoothing = saved_ls
+
     if dist.is_initialized():
         dist.all_reduce(total_nats, op=dist.ReduceOp.SUM)
         dist.all_reduce(total_bytes, op=dist.ReduceOp.SUM)
@@ -944,9 +954,11 @@ while current_epoch <= args.num_epochs:
 
         wandb_run.log(log_dict)
 
-        # Early stopping (use EMA loss if available, otherwise regular)
-        check_bpb = ema_bpb if ema is not None else val_bpb
-        check_loss = ema_loss if ema is not None else val_loss
+        # Early stopping (use best of regular vs EMA)
+        if ema is not None and ema_bpb < val_bpb:
+            check_bpb, check_loss = ema_bpb, ema_loss
+        else:
+            check_bpb, check_loss = val_bpb, val_loss
         if check_bpb < min_val_bpb:
             min_val_bpb = check_bpb
             min_val_loss = check_loss
