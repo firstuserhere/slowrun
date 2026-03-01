@@ -10,11 +10,8 @@
 set -e
 
 NGPU=$(nvidia-smi -L 2>/dev/null | wc -l)
-if [ "$NGPU" -gt 1 ]; then
-    RUN="torchrun --standalone --nproc_per_node=$NGPU train.py"
-else
-    RUN="python train.py"
-fi
+# Always use torchrun — the optimizer requires distributed init even for 1 GPU
+RUN="torchrun --standalone --nproc_per_node=$NGPU train.py"
 
 run_one() {
     local name="$1"
