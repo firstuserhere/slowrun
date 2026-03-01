@@ -81,40 +81,42 @@ ablation() {
 # =========================================================================
 ablation2() {
     echo "=== ABLATION PHASE 2 (3 epochs each) ==="
+    echo "Phase 1 results: WD 2.0 hurt, dropout hurt, label smoothing hurt."
+    echo "Phase 2 focuses on: batch size, warmup, cyclic SWA, EMA, fine WD."
 
-    # 1. WD 3.0 (30x standard — the Kim et al. upper range)
-    run_one "abl-wd30-3ep" \
-        --num-epochs=3 --weight-decay=3.0 --label-smoothing=0.0 --ema-decay=0 --grad-clip=0 \
-        --warmup-ratio=0.0 --swa-start-frac=0 --dropout=0.1
-
-    # 2. WD 3.5
-    run_one "abl-wd35-3ep" \
-        --num-epochs=3 --weight-decay=3.5 --label-smoothing=0.0 --ema-decay=0 --grad-clip=0 \
-        --warmup-ratio=0.0 --swa-start-frac=0 --dropout=0.1
-
-    # 3. WD 4.0 (40x standard — past the paper's range)
-    run_one "abl-wd40-3ep" \
-        --num-epochs=3 --weight-decay=4.0 --label-smoothing=0.0 --ema-decay=0 --grad-clip=0 \
-        --warmup-ratio=0.0 --swa-start-frac=0 --dropout=0.1
-
-    # 4. WD 5.0 (50x standard — aggressive)
-    run_one "abl-wd50-3ep" \
-        --num-epochs=3 --weight-decay=5.0 --label-smoothing=0.0 --ema-decay=0 --grad-clip=0 \
-        --warmup-ratio=0.0 --swa-start-frac=0 --dropout=0.1
-
-    # 5. Smaller batch size (262144 instead of 524288 — 2x more gradient steps)
+    # 1. Smaller batch size (262144 — 2x more gradient steps per epoch)
     run_one "abl-batch262k-3ep" \
         --num-epochs=3 --total-batch-size=262144 --label-smoothing=0.0 --ema-decay=0 --grad-clip=0 \
         --warmup-ratio=0.0 --swa-start-frac=0 --dropout=0.1
 
-    # 6. 2% warmup (baseline uses 0%)
+    # 2. Even smaller batch (131072 — 4x more gradient steps)
+    run_one "abl-batch131k-3ep" \
+        --num-epochs=3 --total-batch-size=131072 --label-smoothing=0.0 --ema-decay=0 --grad-clip=0 \
+        --warmup-ratio=0.0 --swa-start-frac=0 --dropout=0.1
+
+    # 3. Cyclic SWA warmdown (6 cosine cycles, collects ~6 checkpoints and averages)
+    run_one "abl-cyclic6-3ep" \
+        --num-epochs=3 --cyclic-warmdown=6 --label-smoothing=0.0 --ema-decay=0 --grad-clip=0 \
+        --warmup-ratio=0.0 --dropout=0.1
+
+    # 4. 2% warmup (baseline uses 0%)
     run_one "abl-warmup002-3ep" \
         --num-epochs=3 --warmup-ratio=0.02 --label-smoothing=0.0 --ema-decay=0 --grad-clip=0 \
         --swa-start-frac=0 --dropout=0.1
 
+    # 5. EMA enabled (decay 0.99)
+    run_one "abl-ema099-3ep" \
+        --num-epochs=3 --ema-decay=0.99 --label-smoothing=0.0 --grad-clip=0 \
+        --warmup-ratio=0.0 --swa-start-frac=0 --dropout=0.1
+
+    # 6. Fine WD sweep: 1.4 (check if lower WD is better)
+    run_one "abl-wd14-3ep" \
+        --num-epochs=3 --weight-decay=1.4 --label-smoothing=0.0 --ema-decay=0 --grad-clip=0 \
+        --warmup-ratio=0.0 --swa-start-frac=0 --dropout=0.1
+
     echo "=== ABLATION PHASE 2 COMPLETE ==="
     echo "Compare val loss at epoch 3 on wandb."
-    echo "Next: combine best WD + best dropout + best batch size for submission."
+    echo "Next: combine winners for submission run."
 }
 
 # =========================================================================

@@ -59,6 +59,7 @@ parser.add_argument("--dropout-schedule", action="store_true", help="Linearly in
 parser.add_argument("--dropout-end", type=float, default=0.2, help="Final dropout when using --dropout-schedule")
 parser.add_argument("--swa-start-frac", type=float, default=0.75, help="Fraction of training to start SWA (0 to disable)")
 parser.add_argument("--swa-every", type=int, default=10, help="Collect SWA checkpoint every N steps")
+parser.add_argument("--cyclic-warmdown", type=int, default=0, help="Number of cosine cycles in warmdown (0=linear, 5-10 recommended)")
 args = parser.parse_args()
 
 # Resolve output path
@@ -806,7 +807,7 @@ optimizer = model.setup_optimizer()
 ema = EMA(orig_model, decay=args.ema_decay) if args.ema_decay > 0 else None
 
 # SWA
-swa = SWA() if args.swa_start_frac > 0 else None
+swa = SWA() if (args.swa_start_frac > 0 or args.cyclic_warmdown > 0) else None
 
 # Dataloaders
 _train_path = args.input_bin if args.input_bin else os.path.join(DATA_DIR, "fineweb_train.pt")
@@ -832,8 +833,16 @@ def get_lr_multiplier(it):
     if it < warmup: return (it + 1) / warmup
     elif it <= num_iterations - warmdown: return 1.0
     else:
-        progress = (num_iterations - it) / warmdown
-        return progress + (1 - progress) * FINAL_LR_FRAC
+        if args.cyclic_warmdown > 0:
+            # Cosine cycles during warmdown: LR oscillates between a decaying
+            # envelope and FINAL_LR_FRAC.  Each cycle trough is a good SWA point.
+            t = (it - (num_iterations - warmdown)) / warmdown  # 0→1 over warmdown
+            envelope = (1 - t) + t * FINAL_LR_FRAC  # linear decay envelope
+            cycle = 0.5 * (1 + math.cos(2 * math.pi * args.cyclic_warmdown * t))
+            return FINAL_LR_FRAC + (envelope - FINAL_LR_FRAC) * cycle
+        else:
+            progress = (num_iterations - it) / warmdown
+            return progress + (1 - progress) * FINAL_LR_FRAC
 
 def get_muon_momentum(it):
     return (1 - min(it / 300, 1)) * 0.85 + min(it / 300, 1) * 0.95
@@ -891,10 +900,30 @@ while current_epoch <= args.num_epochs:
         set_dropout(orig_model, progress * args.dropout_end)
 
     # SWA collection
-    if swa is not None and step >= int(args.swa_start_frac * num_iterations) and step % args.swa_every == 0:
-        swa.update(orig_model)
-        if swa.count == 1:
-            print0(f"SWA: started collecting (step {step})")
+    if swa is not None:
+        if args.cyclic_warmdown > 0:
+            # Collect at each cycle trough: when LR is at local minimum
+            warmdown_start = num_iterations - round(WARMDOWN_RATIO * num_iterations)
+            warmdown_len = round(WARMDOWN_RATIO * num_iterations)
+            if step >= warmdown_start and warmdown_len > 0:
+                cycle_len = warmdown_len / args.cyclic_warmdown
+                steps_into_warmdown = step - warmdown_start
+                # Trough is at the end of each cycle (when cos = -1, i.e. half-cycle point)
+                cycle_pos = steps_into_warmdown % cycle_len
+                prev_pos = (steps_into_warmdown - 1) % cycle_len if steps_into_warmdown > 0 else 0
+                half = cycle_len / 2
+                # Collect when crossing the half-cycle point (trough)
+                if cycle_pos >= half and prev_pos < half:
+                    swa.update(orig_model)
+                    print0(f"SWA: collected checkpoint #{swa.count} (step {step})")
+            # Also collect at the very last step
+            if step == num_iterations - 1:
+                swa.update(orig_model)
+                print0(f"SWA: collected final checkpoint #{swa.count} (step {step})")
+        elif step >= int(args.swa_start_frac * num_iterations) and step % args.swa_every == 0:
+            swa.update(orig_model)
+            if swa.count == 1:
+                print0(f"SWA: started collecting (step {step})")
     train_loss_f = train_loss.item()
     synchronize()
     dt = time.time() - t0
