@@ -151,7 +151,7 @@ _fa_mod = _load_flash_attn()
 
 def flash_attn_func(q, k, v, causal=False, window_size=(-1, -1)):
     """Flash Attention for training. q,k,v: (B, T, H, D)."""
-    return _fa_mod.flash_attn_func(q, k, v, causal=causal, window_size=window_size)
+    return _fa_mod.flash_attn_func(q.bfloat16(), k.bfloat16(), v.bfloat16(), causal=causal, window_size=window_size)
 
 flash_attn = SimpleNamespace(flash_attn_func=flash_attn_func)
 
