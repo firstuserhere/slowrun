@@ -1,9 +1,9 @@
 #!/bin/bash
 # Experiment runner for NanoGPT Slowrun
 # Usage:
-#   bash run_experiments.sh              # run all phase 1 quick ablations
-#   bash run_experiments.sh phase2       # run phase 2 epoch scaling
-#   bash run_experiments.sh full         # run the full best config
+#   bash run_experiments.sh              # run leaderboard attempt (default)
+#   bash run_experiments.sh leaderboard  # reproduce baseline + try to beat it
+#   bash run_experiments.sh ablation     # quick 1-epoch ablations
 #   bash run_experiments.sh single <name> <args>  # run a single experiment
 set -e
 
@@ -29,75 +29,69 @@ run_one() {
 }
 
 # =========================================================================
-# PHASE 1: Quick ablations (1 epoch each, ~10 min on 1xH100)
-# Goal: find which improvements help, which hurt
+# LEADERBOARD: Get on the board with reliable improvements
+# Strategy: baseline already has shuffling. Train longer + try safe tweaks.
+# On 1xH100: ~32 min/epoch, 12 epochs = ~6.4h, 20 epochs = ~10.6h
 # =========================================================================
-phase1() {
-    echo "=== PHASE 1: Quick ablations (1 epoch each) ==="
+leaderboard() {
+    echo "=== LEADERBOARD RUNS ==="
 
-    # 1. Original baseline (no improvements)
-    run_one "p1-baseline" \
+    # Run 1: Pure baseline at 12 epochs (should match leaderboard 3.376)
+    # No improvements, just the baseline with shuffling (already in DataLoader)
+    run_one "lb-baseline-12ep" \
+        --num-epochs=12 --label-smoothing=0.0 --ema-decay=0 --grad-clip=0 \
+        --warmup-ratio=0.0 --swa-start-frac=0 --dropout=0.1
+
+    # Run 2: Baseline at 20 epochs (unlimited track allows more compute)
+    run_one "lb-baseline-20ep" \
+        --num-epochs=20 --label-smoothing=0.0 --ema-decay=0 --grad-clip=0 \
+        --warmup-ratio=0.0 --swa-start-frac=0 --dropout=0.1
+
+    # Run 3: 20 epochs + label smoothing 0.05 (conservative, eval is now raw CE)
+    run_one "lb-ls005-20ep" \
+        --num-epochs=20 --label-smoothing=0.05 --ema-decay=0 --grad-clip=0 \
+        --warmup-ratio=0.0 --swa-start-frac=0 --dropout=0.1
+
+    echo "=== LEADERBOARD RUNS COMPLETE ==="
+}
+
+# =========================================================================
+# ABLATION: Quick 1-epoch tests to measure individual improvements
+# =========================================================================
+ablation() {
+    echo "=== ABLATIONS (1 epoch each) ==="
+
+    # Baseline (no improvements)
+    run_one "abl-baseline" \
         --num-epochs=1 --label-smoothing=0.0 --ema-decay=0 --grad-clip=0 \
         --warmup-ratio=0.0 --swa-start-frac=0 --dropout=0.1
 
-    # 2. All improvements ON (the new defaults)
-    run_one "p1-all-improvements" \
-        --num-epochs=1
+    # Label smoothing 0.05
+    run_one "abl-ls005" \
+        --num-epochs=1 --label-smoothing=0.05 --ema-decay=0 --grad-clip=0 \
+        --warmup-ratio=0.0 --swa-start-frac=0 --dropout=0.1
 
-    # 3. Ablation: no label smoothing
-    run_one "p1-no-label-smooth" \
-        --num-epochs=1 --label-smoothing=0.0
+    # Label smoothing 0.1
+    run_one "abl-ls010" \
+        --num-epochs=1 --label-smoothing=0.1 --ema-decay=0 --grad-clip=0 \
+        --warmup-ratio=0.0 --swa-start-frac=0 --dropout=0.1
 
-    # 4. Ablation: no EMA
-    run_one "p1-no-ema" \
-        --num-epochs=1 --ema-decay=0
+    # Warmup 2%
+    run_one "abl-warmup" \
+        --num-epochs=1 --label-smoothing=0.0 --ema-decay=0 --grad-clip=0 \
+        --warmup-ratio=0.02 --swa-start-frac=0 --dropout=0.1
 
-    # 5. Ablation: no grad clipping
-    run_one "p1-no-gradclip" \
-        --num-epochs=1 --grad-clip=0
+    # Grad clip 1.0
+    run_one "abl-gradclip" \
+        --num-epochs=1 --label-smoothing=0.0 --ema-decay=0 --grad-clip=1.0 \
+        --warmup-ratio=0.0 --swa-start-frac=0 --dropout=0.1
 
-    # 6. Ablation: no warmup
-    run_one "p1-no-warmup" \
-        --num-epochs=1 --warmup-ratio=0.0
+    # Dropout 0.15 (higher than baseline 0.1)
+    run_one "abl-drop015" \
+        --num-epochs=1 --label-smoothing=0.0 --ema-decay=0 --grad-clip=0 \
+        --warmup-ratio=0.0 --swa-start-frac=0 --dropout=0.15
 
-    # 7. With dropout scheduling (0 -> 0.2)
-    run_one "p1-dropout-sched" \
-        --num-epochs=1 --dropout-schedule --dropout-end=0.2
-
-    # 8. Label smoothing sweep: 0.05
-    run_one "p1-ls-0.05" \
-        --num-epochs=1 --label-smoothing=0.05
-
-    # 9. Label smoothing sweep: 0.15
-    run_one "p1-ls-0.15" \
-        --num-epochs=1 --label-smoothing=0.15
-
-    echo "=== PHASE 1 COMPLETE ==="
-}
-
-# =========================================================================
-# PHASE 2: Epoch scaling with best config
-# Run after reviewing Phase 1 results
-# =========================================================================
-phase2() {
-    echo "=== PHASE 2: Epoch scaling ==="
-
-    run_one "p2-3ep" --num-epochs=3
-    run_one "p2-6ep" --num-epochs=6
-    run_one "p2-12ep" --num-epochs=12
-    run_one "p2-20ep" --num-epochs=20
-
-    echo "=== PHASE 2 COMPLETE ==="
-}
-
-# =========================================================================
-# FULL: Final run with best config
-# =========================================================================
-full() {
-    echo "=== FULL RUN ==="
-    # TODO: fill in best args from phase 1 + phase 2
-    run_one "full-best" --num-epochs=30
-    echo "=== FULL RUN COMPLETE ==="
+    echo "=== ABLATIONS COMPLETE ==="
 }
 
 # =========================================================================
@@ -112,10 +106,9 @@ single() {
 # =========================================================================
 # Main
 # =========================================================================
-case "${1:-phase1}" in
-    phase1) phase1 ;;
-    phase2) phase2 ;;
-    full)   full ;;
-    single) shift; single "$@" ;;
-    *)      echo "Usage: $0 {phase1|phase2|full|single <name> <args...>}" ;;
+case "${1:-leaderboard}" in
+    leaderboard) leaderboard ;;
+    ablation)    ablation ;;
+    single)      shift; single "$@" ;;
+    *)           echo "Usage: $0 {leaderboard|ablation|single <name> <args...>}" ;;
 esac
