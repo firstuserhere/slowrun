@@ -214,6 +214,18 @@ ablation4() {
 }
 
 # =========================================================================
+# ABLATION PHASE 5: Fixed combo (SwiGLU + VE proj with Muon)
+# =========================================================================
+ablation5() {
+    echo "=== ABLATION PHASE 5: Fixed combo ==="
+
+    run_one "combo-swiglu-veproj-wd12" \
+        --num-epochs=3 --swiglu --ve-proj --weight-decay=1.2 $BASELINE
+
+    echo "=== ABLATION PHASE 5 COMPLETE ==="
+}
+
+# =========================================================================
 # Single experiment
 # =========================================================================
 single() {
@@ -230,6 +242,7 @@ case "${1:-ablation}" in
     ablation2) ablation2 ;;
     ablation3) ablation3 ;;
     ablation4) ablation4 ;;
+    ablation5) ablation5 ;;
     submit)    submit ;;
     single)    shift; single "$@" ;;
     *)         echo "Usage: $0 {ablation|ablation2|ablation3|ablation4|submit|single <name> <args...>}" ;;
