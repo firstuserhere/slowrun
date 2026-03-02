@@ -38,7 +38,7 @@ parser.add_argument("--patience", type=int, default=-1)
 parser.add_argument("--wandb-run", type=str, default=None)
 parser.add_argument("--scalar-lr", type=float, default=0.5)
 parser.add_argument("--matrix-lr", type=float, default=0.08)
-parser.add_argument("--weight-decay", type=float, default=1.6)
+parser.add_argument("--weight-decay", type=float, default=1.4)
 parser.add_argument("--total-batch-size", type=int, default=524288)
 parser.add_argument("--save-result", type=str, default="")
 parser.add_argument("--n_layer", type=int, default=30)
@@ -222,12 +222,14 @@ class CausalSelfAttention(nn.Module):
 class MLP(nn.Module):
     def __init__(self, config):
         super().__init__()
-        self.c_fc = nn.Linear(config.n_embd, 4 * config.n_embd, bias=False)
-        self.c_proj = nn.Linear(4 * config.n_embd, config.n_embd, bias=False)
+        hidden = 256 * ((8 * config.n_embd // 3 + 255) // 256)
+        self.c_gate = nn.Linear(config.n_embd, hidden, bias=False)
+        self.c_fc = nn.Linear(config.n_embd, hidden, bias=False)
+        self.c_proj = nn.Linear(hidden, config.n_embd, bias=False)
         self.resid_dropout = nn.Dropout(config.dropout)
 
     def forward(self, x):
-        return self.resid_dropout(self.c_proj(F.relu(self.c_fc(x)).square()))
+        return self.resid_dropout(self.c_proj(F.silu(self.c_gate(x)) * self.c_fc(x)))
 
 
 class Block(nn.Module):
@@ -259,7 +261,7 @@ class GPT(nn.Module):
         self.x0_lambdas = nn.Parameter(torch.zeros(config.n_layer))
         head_dim = config.n_embd // config.n_head
         kv_dim = config.n_kv_head * head_dim
-        self.value_embeds = nn.ModuleDict({str(i): nn.Embedding(padded_vocab, kv_dim) for i in range(config.n_layer) if has_ve(i, config.n_layer)})
+        self.ve_projs = nn.ModuleDict({str(i): nn.Linear(config.n_embd, kv_dim, bias=False) for i in range(config.n_layer) if has_ve(i, config.n_layer)})
         self.rotary_seq_len = config.sequence_len * 10
         cos, sin = self._precompute_rotary(self.rotary_seq_len, head_dim)
         self.register_buffer("cos", cos, persistent=False)
@@ -275,11 +277,12 @@ class GPT(nn.Module):
             torch.nn.init.uniform_(block.attn.c_k.weight, -s, s)
             torch.nn.init.uniform_(block.attn.c_v.weight, -s, s)
             torch.nn.init.zeros_(block.attn.c_proj.weight)
+            torch.nn.init.uniform_(block.mlp.c_gate.weight, -s, s)
             torch.nn.init.uniform_(block.mlp.c_fc.weight, -s, s)
             torch.nn.init.zeros_(block.mlp.c_proj.weight)
         self.resid_lambdas.fill_(1.0)
         self.x0_lambdas.fill_(0.1)
-        for ve in self.value_embeds.values():
+        for ve in self.ve_projs.values():
             torch.nn.init.uniform_(ve.weight, -s, s)
         for block in self.transformer.h:
             if block.attn.ve_gate is not None:
@@ -289,7 +292,7 @@ class GPT(nn.Module):
         self.cos, self.sin = cos, sin
         if self.transformer.wte.weight.device.type == "cuda":
             self.transformer.wte.to(dtype=torch.bfloat16)
-            for ve in self.value_embeds.values():
+            for ve in self.ve_projs.values():
                 ve.to(dtype=torch.bfloat16)
 
     def _precompute_rotary(self, seq_len, head_dim, base=10000):
@@ -313,7 +316,7 @@ class GPT(nn.Module):
 
     def estimate_flops(self):
         nparams = sum(p.numel() for p in self.parameters())
-        ve_numel = sum(ve.weight.numel() for ve in self.value_embeds.values())
+        ve_numel = sum(ve.weight.numel() for ve in self.ve_projs.values())
         nparams_exclude = self.transformer.wte.weight.numel() + ve_numel + self.resid_lambdas.numel() + self.x0_lambdas.numel()
         h, q, t = self.config.n_head, self.config.n_embd // self.config.n_head, self.config.sequence_len
         attn_flops = sum(12 * h * q * min(w[0], t) if w[0] >= 0 else 12 * h * q * t for w in self.window_sizes)
@@ -322,7 +325,7 @@ class GPT(nn.Module):
     def setup_optimizer(self):
         ddp, rank, local_rank, world_size = get_dist_info()
         matrix_params = list(self.transformer.h.parameters())
-        ve_params = list(self.value_embeds.parameters())
+        ve_params = list(self.ve_projs.parameters())
         embed_params = list(self.transformer.wte.parameters())
         lm_head_params = list(self.lm_head.parameters())
         resid_params = [self.resid_lambdas]
@@ -352,7 +355,7 @@ class GPT(nn.Module):
         x0 = x
         for i, block in enumerate(self.transformer.h):
             x = self.resid_lambdas[i] * x + self.x0_lambdas[i] * x0
-            ve = self.value_embeds[str(i)](idx) if str(i) in self.value_embeds else None
+            ve = self.ve_projs[str(i)](x0) if str(i) in self.ve_projs else None
             x = block(x, ve, cos_sin, self.window_sizes[i])
         x = norm(x)
         logits = self.lm_head(x)[..., :self.config.vocab_size].float()
@@ -789,11 +792,11 @@ model.init_weights()
 
 param_counts = sum(p.numel() for p in model.parameters())
 transformer_params = sum(p.numel() for p in model.transformer.h.parameters())
-ve_params = sum(p.numel() for p in model.value_embeds.parameters())
+ve_params = sum(p.numel() for p in model.ve_projs.parameters())
 lm_head_params = sum(p.numel() for p in model.lm_head.parameters())
 other_params = param_counts - transformer_params - ve_params - lm_head_params
 num_flops_per_token = model.estimate_flops()
-print0(f"Parameters: {param_counts:,} (transformer: {transformer_params:,}, value_embeds: {ve_params:,}, lm_head: {lm_head_params:,}, other: {other_params:,})")
+print0(f"Parameters: {param_counts:,} (transformer: {transformer_params:,}, ve_projs: {ve_params:,}, lm_head: {lm_head_params:,}, other: {other_params:,})")
 print0(f"FLOPs per token: {num_flops_per_token:e}")
 
 # Compile

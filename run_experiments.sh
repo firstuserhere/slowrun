@@ -27,7 +27,8 @@ run_one() {
     echo ""
 }
 
-# Baseline args: matches the leaderboard #2 config exactly (no improvements)
+# Baseline args (no extra tricks — architecture changes are in train.py now)
+# SwiGLU + VE projections + WD 1.4 are all defaults in train.py
 BASELINE="--label-smoothing=0.0 --ema-decay=0 --grad-clip=0 --warmup-ratio=0.0 --swa-start-frac=0 --dropout=0.1"
 
 # =========================================================================
@@ -131,11 +132,28 @@ submit() {
         [ "$ans" != "y" ] && exit 1
     fi
     echo "=== SUBMISSION RUN ==="
-    # TODO: update with best config from ablations
-    # Default: baseline + 15 epochs (fits in ~1hr on 8xH100)
-    run_one "submit-v1" \
+    echo "Config: SwiGLU + VE projections + WD 1.4 (defaults in train.py)"
+    run_one "submit-v2-swiglu-veproj-wd14" \
         --num-epochs=15 $BASELINE
     echo "=== SUBMISSION COMPLETE ==="
+}
+
+# =========================================================================
+# ABLATION PHASE 3: Validate SwiGLU + VE proj + WD 1.4 combo
+# Architecture changes are now defaults in train.py
+# =========================================================================
+ablation3() {
+    echo "=== ABLATION PHASE 3: SwiGLU + VE proj + WD 1.4 ==="
+
+    # 1. New architecture with WD 1.4 (all defaults now)
+    run_one "abl-combo-3ep" \
+        --num-epochs=3 $BASELINE
+
+    # 2. Compare: new architecture but with old WD 1.6
+    run_one "abl-combo-wd16-3ep" \
+        --num-epochs=3 --weight-decay=1.6 $BASELINE
+
+    echo "=== ABLATION PHASE 3 COMPLETE ==="
 }
 
 # =========================================================================
@@ -153,7 +171,8 @@ single() {
 case "${1:-ablation}" in
     ablation)  ablation ;;
     ablation2) ablation2 ;;
+    ablation3) ablation3 ;;
     submit)    submit ;;
     single)    shift; single "$@" ;;
-    *)         echo "Usage: $0 {ablation|ablation2|submit|single <name> <args...>}" ;;
+    *)         echo "Usage: $0 {ablation|ablation2|ablation3|submit|single <name> <args...>}" ;;
 esac
