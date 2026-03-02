@@ -60,6 +60,7 @@ parser.add_argument("--dropout-end", type=float, default=0.2, help="Final dropou
 parser.add_argument("--swa-start-frac", type=float, default=0.75, help="Fraction of training to start SWA (0 to disable)")
 parser.add_argument("--swa-every", type=int, default=10, help="Collect SWA checkpoint every N steps")
 parser.add_argument("--cyclic-warmdown", type=int, default=0, help="Number of cosine cycles in warmdown (0=linear, 5-10 recommended)")
+parser.add_argument("--ve-proj", action="store_true", help="Use linear projections from x0 for value embeddings instead of lookup tables")
 args = parser.parse_args()
 
 # Resolve output path
@@ -261,7 +262,11 @@ class GPT(nn.Module):
         self.x0_lambdas = nn.Parameter(torch.zeros(config.n_layer))
         head_dim = config.n_embd // config.n_head
         kv_dim = config.n_kv_head * head_dim
-        self.ve_projs = nn.ModuleDict({str(i): nn.Linear(config.n_embd, kv_dim, bias=False) for i in range(config.n_layer) if has_ve(i, config.n_layer)})
+        self.use_ve_proj = args.ve_proj
+        if self.use_ve_proj:
+            self.ve_projs = nn.ModuleDict({str(i): nn.Linear(config.n_embd, kv_dim, bias=False) for i in range(config.n_layer) if has_ve(i, config.n_layer)})
+        else:
+            self.ve_projs = nn.ModuleDict({str(i): nn.Embedding(padded_vocab, kv_dim) for i in range(config.n_layer) if has_ve(i, config.n_layer)})
         self.rotary_seq_len = config.sequence_len * 10
         cos, sin = self._precompute_rotary(self.rotary_seq_len, head_dim)
         self.register_buffer("cos", cos, persistent=False)
@@ -355,7 +360,7 @@ class GPT(nn.Module):
         x0 = x
         for i, block in enumerate(self.transformer.h):
             x = self.resid_lambdas[i] * x + self.x0_lambdas[i] * x0
-            ve = self.ve_projs[str(i)](x0) if str(i) in self.ve_projs else None
+            ve = self.ve_projs[str(i)](x0 if self.use_ve_proj else idx) if str(i) in self.ve_projs else None
             x = block(x, ve, cos_sin, self.window_sizes[i])
         x = norm(x)
         logits = self.lm_head(x)[..., :self.config.vocab_size].float()
