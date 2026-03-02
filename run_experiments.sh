@@ -158,10 +158,10 @@ submit() {
             run_one "submit-combo-wd16" \
                 --num-epochs=12 --swiglu --ve-proj --weight-decay=1.6 $BASELINE
             ;;
-        combo13)
-            echo "Config: SwiGLU + VE proj + WD 1.2 (13 epochs, batch 8)"
-            run_one "submit-combo13-bs8" \
-                --num-epochs=13 --device-batch-size=8 --swiglu --ve-proj --weight-decay=1.2 $BASELINE
+        combo14)
+            echo "Config: SwiGLU + VE proj + WD 1.6 (14 epochs)"
+            run_one "submit-combo-14ep" \
+                --num-epochs=14 --swiglu --ve-proj --weight-decay=1.6 $BASELINE
             ;;
         memtest)
             echo "Config: Memory test — combo with batch 8 (1 epoch)"
