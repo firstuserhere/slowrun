@@ -138,6 +138,11 @@ submit() {
             run_one "submit-swiglu-wd12" \
                 --num-epochs=15 --max-minutes=56 --swiglu --weight-decay=1.2 $BASELINE
             ;;
+        swiglu14)
+            echo "Config: SwiGLU + WD 1.4 (max 56 min)"
+            run_one "submit-swiglu-wd14-v2" \
+                --num-epochs=15 --max-minutes=56 --swiglu $BASELINE
+            ;;
         veproj)
             echo "Config: VE proj + WD 1.4 (max 58 min)"
             run_one "submit-veproj-wd14" \
