@@ -132,9 +132,27 @@ submit() {
         [ "$ans" != "y" ] && exit 1
     fi
     echo "=== SUBMISSION RUN ==="
-    echo "Config: SwiGLU + VE projections + WD 1.4 (defaults in train.py)"
-    run_one "submit-v2-swiglu-veproj-wd14" \
-        --num-epochs=15 $BASELINE
+    case "${1:-swiglu}" in
+        swiglu)
+            echo "Config: SwiGLU + WD 1.4"
+            run_one "submit-swiglu-wd14" \
+                --num-epochs=13 --swiglu $BASELINE
+            ;;
+        veproj)
+            echo "Config: VE proj + WD 1.4"
+            run_one "submit-veproj-wd14" \
+                --num-epochs=15 --ve-proj $BASELINE
+            ;;
+        baseline)
+            echo "Config: Baseline + WD 1.4"
+            run_one "submit-baseline-wd14" \
+                --num-epochs=15 $BASELINE
+            ;;
+        *)
+            echo "Usage: $0 submit {swiglu|veproj|baseline}"
+            exit 1
+            ;;
+    esac
     echo "=== SUBMISSION COMPLETE ==="
 }
 
