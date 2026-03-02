@@ -248,7 +248,7 @@ case "${1:-ablation}" in
     ablation3) ablation3 ;;
     ablation4) ablation4 ;;
     ablation5) ablation5 ;;
-    submit)    submit ;;
+    submit)    shift; submit "$@" ;;
     single)    shift; single "$@" ;;
     *)         echo "Usage: $0 {ablation|ablation2|ablation3|ablation4|submit|single <name> <args...>}" ;;
 esac
