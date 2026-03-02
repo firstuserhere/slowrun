@@ -136,17 +136,17 @@ submit() {
         swiglu)
             echo "Config: SwiGLU + WD 1.4 (max 58 min)"
             run_one "submit-swiglu-wd14" \
-                --num-epochs=15 --max-minutes=58 --swiglu $BASELINE
+                --num-epochs=15 --max-minutes=56 --swiglu $BASELINE
             ;;
         veproj)
             echo "Config: VE proj + WD 1.4 (max 58 min)"
             run_one "submit-veproj-wd14" \
-                --num-epochs=20 --max-minutes=58 --ve-proj $BASELINE
+                --num-epochs=20 --max-minutes=56 --ve-proj $BASELINE
             ;;
         baseline)
             echo "Config: Baseline + WD 1.4 (max 58 min)"
             run_one "submit-baseline-wd14" \
-                --num-epochs=20 --max-minutes=58 $BASELINE
+                --num-epochs=20 --max-minutes=56 $BASELINE
             ;;
         *)
             echo "Usage: $0 submit {swiglu|veproj|baseline}"
