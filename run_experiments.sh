@@ -134,19 +134,19 @@ submit() {
     echo "=== SUBMISSION RUN ==="
     case "${1:-swiglu}" in
         swiglu)
-            echo "Config: SwiGLU + WD 1.4"
+            echo "Config: SwiGLU + WD 1.4 (max 58 min)"
             run_one "submit-swiglu-wd14" \
-                --num-epochs=13 --swiglu $BASELINE
+                --num-epochs=15 --max-minutes=58 --swiglu $BASELINE
             ;;
         veproj)
-            echo "Config: VE proj + WD 1.4"
+            echo "Config: VE proj + WD 1.4 (max 58 min)"
             run_one "submit-veproj-wd14" \
-                --num-epochs=15 --ve-proj $BASELINE
+                --num-epochs=20 --max-minutes=58 --ve-proj $BASELINE
             ;;
         baseline)
-            echo "Config: Baseline + WD 1.4"
+            echo "Config: Baseline + WD 1.4 (max 58 min)"
             run_one "submit-baseline-wd14" \
-                --num-epochs=15 $BASELINE
+                --num-epochs=20 --max-minutes=58 $BASELINE
             ;;
         *)
             echo "Usage: $0 submit {swiglu|veproj|baseline}"

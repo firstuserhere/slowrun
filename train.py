@@ -63,6 +63,7 @@ parser.add_argument("--cyclic-warmdown", type=int, default=0, help="Number of co
 parser.add_argument("--ve-proj", action="store_true", help="Use linear projections from x0 for value embeddings instead of lookup tables")
 parser.add_argument("--swiglu", action="store_true", help="Use SwiGLU activation instead of ReLU-squared")
 parser.add_argument("--geglu", action="store_true", help="Use GELU gating instead of SiLU in GLU MLP (requires --swiglu)")
+parser.add_argument("--max-minutes", type=float, default=0, help="Stop training after this many minutes (0=no limit, use num-epochs)")
 args = parser.parse_args()
 
 # Resolve output path
@@ -847,9 +848,18 @@ x, y, current_epoch = next(train_loader)
 tokens_per_fwdbwd = args.device_batch_size * MAX_SEQ_LEN * ddp_world_size
 assert TOTAL_BATCH_SIZE % tokens_per_fwdbwd == 0
 grad_accum_steps = TOTAL_BATCH_SIZE // tokens_per_fwdbwd
-num_iterations = round(TOKENS_PER_EPOCH * args.num_epochs / TOTAL_BATCH_SIZE)  # estimate for LR schedule
+if args.max_minutes > 0:
+    # Time-based training: set high epoch count, will break on wall time
+    effective_epochs = args.num_epochs if args.num_epochs > 50 else 100
+    num_iterations = round(TOKENS_PER_EPOCH * effective_epochs / TOTAL_BATCH_SIZE)
+else:
+    num_iterations = round(TOKENS_PER_EPOCH * args.num_epochs / TOTAL_BATCH_SIZE)
+training_start_time = time.time()
 print0(f"Batch size: {TOTAL_BATCH_SIZE:,} tokens, grad accum: {grad_accum_steps} steps")
-print0(f"Training for {args.num_epochs} epoch(s) (~{num_iterations} steps estimated)")
+if args.max_minutes > 0:
+    print0(f"Training for up to {args.max_minutes:.1f} minutes (LR schedule over ~{num_iterations} steps)")
+else:
+    print0(f"Training for {args.num_epochs} epoch(s) (~{num_iterations} steps estimated)")
 print0(f"Eval set: {EVAL_TOKENS:,} tokens")
 
 # Schedulers
@@ -955,6 +965,13 @@ while current_epoch <= args.num_epochs:
     dt = time.time() - t0
 
     step += 1
+
+    # Wall time limit check
+    if args.max_minutes > 0:
+        elapsed = (time.time() - training_start_time) / 60
+        if elapsed >= args.max_minutes:
+            print0(f"Wall time limit reached ({elapsed:.1f}m >= {args.max_minutes}m) at step {step}. Stopping.")
+            break
 
     # Logging
     ema_beta = 0.9
