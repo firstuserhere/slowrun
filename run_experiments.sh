@@ -154,9 +154,9 @@ submit() {
                 --num-epochs=15 $BASELINE
             ;;
         combo)
-            echo "Config: SwiGLU + VE proj + WD 1.2 (20 epochs)"
+            echo "Config: SwiGLU + VE proj + WD 1.2 (12 epochs)"
             run_one "submit-combo-swiglu-veproj-wd12" \
-                --num-epochs=20 --swiglu --ve-proj --weight-decay=1.2 $BASELINE
+                --num-epochs=12 --swiglu --ve-proj --weight-decay=1.2 $BASELINE
             ;;
         *)
             echo "Usage: $0 submit {combo|swiglu|veproj|baseline}"
