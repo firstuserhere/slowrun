@@ -157,6 +157,40 @@ ablation3() {
 }
 
 # =========================================================================
+# ABLATION PHASE 4: SwiGLU vs GeGLU vs VE proj, WD sweep
+# Each tests one leaderboard-proven arch change + our WD improvement
+# =========================================================================
+ablation4() {
+    echo "=== ABLATION PHASE 4 (3 epochs each) ==="
+
+    # 1. SwiGLU + WD 1.4 (leaderboard #1 + our WD finding)
+    run_one "swiglu-wd14-run1" \
+        --num-epochs=3 --swiglu $BASELINE
+
+    # 2. SwiGLU + WD 1.2 (push WD lower)
+    run_one "swiglu-wd12-run1" \
+        --num-epochs=3 --swiglu --weight-decay=1.2 $BASELINE
+
+    # 3. VE proj + WD 1.4 (leaderboard #2 + our WD, properly with Muon)
+    run_one "veproj-wd14-run1" \
+        --num-epochs=3 --ve-proj $BASELINE
+
+    # 4. SwiGLU + WD 1.4 run 2 (variance check)
+    run_one "swiglu-wd14-run2" \
+        --num-epochs=3 --swiglu $BASELINE
+
+    # 5. SwiGLU + WD 1.6 (control — matches SwiGLU PR exactly)
+    run_one "swiglu-wd16-run1" \
+        --num-epochs=3 --swiglu --weight-decay=1.6 $BASELINE
+
+    # 6. GeGLU + WD 1.4 (GELU gating variant)
+    run_one "geglu-wd14-run1" \
+        --num-epochs=3 --swiglu --geglu $BASELINE
+
+    echo "=== ABLATION PHASE 4 COMPLETE ==="
+}
+
+# =========================================================================
 # Single experiment
 # =========================================================================
 single() {
@@ -172,7 +206,8 @@ case "${1:-ablation}" in
     ablation)  ablation ;;
     ablation2) ablation2 ;;
     ablation3) ablation3 ;;
+    ablation4) ablation4 ;;
     submit)    submit ;;
     single)    shift; single "$@" ;;
-    *)         echo "Usage: $0 {ablation|ablation2|ablation3|submit|single <name> <args...>}" ;;
+    *)         echo "Usage: $0 {ablation|ablation2|ablation3|ablation4|submit|single <name> <args...>}" ;;
 esac
