@@ -62,6 +62,7 @@ parser.add_argument("--swa-every", type=int, default=10, help="Collect SWA check
 parser.add_argument("--cyclic-warmdown", type=int, default=0, help="Number of cosine cycles in warmdown (0=linear, 5-10 recommended)")
 parser.add_argument("--ve-proj", action="store_true", help="Use linear projections from x0 for value embeddings instead of lookup tables")
 parser.add_argument("--swiglu", action="store_true", help="Use SwiGLU activation instead of ReLU-squared")
+parser.add_argument("--geglu", action="store_true", help="Use GELU gating instead of SiLU in GLU MLP (requires --swiglu)")
 args = parser.parse_args()
 
 # Resolve output path
@@ -225,6 +226,7 @@ class MLP(nn.Module):
     def __init__(self, config):
         super().__init__()
         self.use_swiglu = args.swiglu
+        self.use_geglu = args.geglu
         if self.use_swiglu:
             hidden = 256 * ((8 * config.n_embd // 3 + 255) // 256)
             self.c_gate = nn.Linear(config.n_embd, hidden, bias=False)
@@ -237,7 +239,8 @@ class MLP(nn.Module):
 
     def forward(self, x):
         if self.use_swiglu:
-            return self.resid_dropout(self.c_proj(F.silu(self.c_gate(x)) * self.c_fc(x)))
+            gate_act = F.gelu(self.c_gate(x)) if self.use_geglu else F.silu(self.c_gate(x))
+            return self.resid_dropout(self.c_proj(gate_act * self.c_fc(x)))
         return self.resid_dropout(self.c_proj(F.relu(self.c_fc(x)).square()))
 
 
