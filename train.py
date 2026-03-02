@@ -61,6 +61,7 @@ parser.add_argument("--swa-start-frac", type=float, default=0.75, help="Fraction
 parser.add_argument("--swa-every", type=int, default=10, help="Collect SWA checkpoint every N steps")
 parser.add_argument("--cyclic-warmdown", type=int, default=0, help="Number of cosine cycles in warmdown (0=linear, 5-10 recommended)")
 parser.add_argument("--ve-proj", action="store_true", help="Use linear projections from x0 for value embeddings instead of lookup tables")
+parser.add_argument("--swiglu", action="store_true", help="Use SwiGLU activation instead of ReLU-squared")
 args = parser.parse_args()
 
 # Resolve output path
@@ -223,14 +224,21 @@ class CausalSelfAttention(nn.Module):
 class MLP(nn.Module):
     def __init__(self, config):
         super().__init__()
-        hidden = 256 * ((8 * config.n_embd // 3 + 255) // 256)
-        self.c_gate = nn.Linear(config.n_embd, hidden, bias=False)
-        self.c_fc = nn.Linear(config.n_embd, hidden, bias=False)
-        self.c_proj = nn.Linear(hidden, config.n_embd, bias=False)
+        self.use_swiglu = args.swiglu
+        if self.use_swiglu:
+            hidden = 256 * ((8 * config.n_embd // 3 + 255) // 256)
+            self.c_gate = nn.Linear(config.n_embd, hidden, bias=False)
+            self.c_fc = nn.Linear(config.n_embd, hidden, bias=False)
+            self.c_proj = nn.Linear(hidden, config.n_embd, bias=False)
+        else:
+            self.c_fc = nn.Linear(config.n_embd, 4 * config.n_embd, bias=False)
+            self.c_proj = nn.Linear(4 * config.n_embd, config.n_embd, bias=False)
         self.resid_dropout = nn.Dropout(config.dropout)
 
     def forward(self, x):
-        return self.resid_dropout(self.c_proj(F.silu(self.c_gate(x)) * self.c_fc(x)))
+        if self.use_swiglu:
+            return self.resid_dropout(self.c_proj(F.silu(self.c_gate(x)) * self.c_fc(x)))
+        return self.resid_dropout(self.c_proj(F.relu(self.c_fc(x)).square()))
 
 
 class Block(nn.Module):
@@ -282,7 +290,8 @@ class GPT(nn.Module):
             torch.nn.init.uniform_(block.attn.c_k.weight, -s, s)
             torch.nn.init.uniform_(block.attn.c_v.weight, -s, s)
             torch.nn.init.zeros_(block.attn.c_proj.weight)
-            torch.nn.init.uniform_(block.mlp.c_gate.weight, -s, s)
+            if hasattr(block.mlp, 'c_gate'):
+                torch.nn.init.uniform_(block.mlp.c_gate.weight, -s, s)
             torch.nn.init.uniform_(block.mlp.c_fc.weight, -s, s)
             torch.nn.init.zeros_(block.mlp.c_proj.weight)
         self.resid_lambdas.fill_(1.0)
@@ -297,8 +306,9 @@ class GPT(nn.Module):
         self.cos, self.sin = cos, sin
         if self.transformer.wte.weight.device.type == "cuda":
             self.transformer.wte.to(dtype=torch.bfloat16)
-            for ve in self.ve_projs.values():
-                ve.to(dtype=torch.bfloat16)
+            if not self.use_ve_proj:  # embedding tables use bf16; linear projs stay fp32
+                for ve in self.ve_projs.values():
+                    ve.to(dtype=torch.bfloat16)
 
     def _precompute_rotary(self, seq_len, head_dim, base=10000):
         device = self.transformer.wte.weight.device
@@ -330,7 +340,12 @@ class GPT(nn.Module):
     def setup_optimizer(self):
         ddp, rank, local_rank, world_size = get_dist_info()
         matrix_params = list(self.transformer.h.parameters())
-        ve_params = list(self.ve_projs.parameters())
+        if self.use_ve_proj:
+            # VE projections are matrix params -> use Muon (matching PR #11)
+            matrix_params += list(self.ve_projs.parameters())
+            ve_params = []
+        else:
+            ve_params = list(self.ve_projs.parameters())
         embed_params = list(self.transformer.wte.parameters())
         lm_head_params = list(self.lm_head.parameters())
         resid_params = [self.resid_lambdas]
